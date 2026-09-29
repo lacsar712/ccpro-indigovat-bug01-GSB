@@ -16,6 +16,7 @@ from app.services.vat_rules import (
     VatRuleError,
     assert_can_mark_ready,
     legend_counts_as_ready,
+    validate_vat_status_change,
 )
 
 router = APIRouter()
@@ -166,15 +167,8 @@ async def bay_vat_status(
     error = None
     try:
         latest = item.latest_lot()
-        if status == Vat.STATUS_READY:
-            redox = latest.redoxMv if latest else None
-            ok = redox is not None and Decimal(redox) >= Decimal("-500")
-            if not ok:
-                raise VatRuleError(
-                    "无法设为可染色：最新浸染批次的氧化还原电位为空或高于 -500 mV。"
-                )
-        elif status not in (Vat.STATUS_IDLE, Vat.STATUS_REDUCING, Vat.STATUS_READY):
-            raise VatRuleError("未知状态")
+        # 状态变更门槛统一走 vat_rules，展开区提示与图例统计共用同一判定
+        validate_vat_status_change(item, status, latest)
         item.status = status
         db.commit()
         return RedirectResponse(f"/?vat={pk}" + (f"&workshop={ws}" if ws else ""), status_code=303)
