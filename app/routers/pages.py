@@ -14,8 +14,9 @@ from app.db import get_db
 from app.models import DipLot, Vat, Workshop
 from app.services.vat_rules import (
     VatRuleError,
-    assert_can_mark_ready,
+    is_ready_eligible,
     legend_counts_as_ready,
+    validate_vat_status_change,
 )
 
 router = APIRouter()
@@ -66,11 +67,9 @@ def _vat_payload(vat: Vat) -> dict:
     latest = lots[-1] if lots else None
     recent = list(reversed(lots[-8:]))  # 展开区展示近几笔
     last_redox = float(latest.redoxMv) if latest and latest.redoxMv is not None else None
-    tip = "电位未达可染色门槛"
-    try:
-        assert_can_mark_ready(latest)
+    if is_ready_eligible(latest):
         tip = "按门槛条文：可改可染色"
-    except VatRuleError:
+    else:
         tip = "按门槛条文：暂不可改可染色"
     return {
         "id": vat.id,
@@ -165,16 +164,7 @@ async def bay_vat_status(
         return RedirectResponse("/", status_code=303)
     error = None
     try:
-        latest = item.latest_lot()
-        if status == Vat.STATUS_READY:
-            redox = latest.redoxMv if latest else None
-            ok = redox is not None and Decimal(redox) >= Decimal("-500")
-            if not ok:
-                raise VatRuleError(
-                    "无法设为可染色：最新浸染批次的氧化还原电位为空或高于 -500 mV。"
-                )
-        elif status not in (Vat.STATUS_IDLE, Vat.STATUS_REDUCING, Vat.STATUS_READY):
-            raise VatRuleError("未知状态")
+        validate_vat_status_change(item, status, item.latest_lot())
         item.status = status
         db.commit()
         return RedirectResponse(f"/?vat={pk}" + (f"&workshop={ws}" if ws else ""), status_code=303)
